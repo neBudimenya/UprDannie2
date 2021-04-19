@@ -7,6 +7,8 @@ import (
   "encoding/json"
   "time"
   "github.com/streadway/amqp"
+  "strconv"
+
 )
 func connectToDataBase()(db *gorm.DB,err error){
   dsn := "host=localhost user=postgres password=123 dbname=warehouse port=5432 sslmode=disable"
@@ -31,63 +33,107 @@ type Product struct {
 // a method to get product amount 
 
 
-func getProductAmount()(product []*Product,err error){
-
+func getProductAmount(orderId uint)(product []*Product,err error){
  db,err := connectToDataBase()
   if err != nil {
     return nil,err
   }
-  db.Model(&Product{}).Select("products.id,products.amount").Scan(&product)
+  db.Model(&Product{}).Select("products.id,products.amount").Where("products.id = ?",orderId).Scan(&product)
   if db.Error != nil {
     return nil, db.Error
   }
   return product,nil
 }
 
-func main (){
-  conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-  if err != nil {
-    log.Fatal(err)
-  }
-  channel,err := conn.Channel()
-  if err != nil{
-    log.Fatal(err)
-  }
-  defer channel.Close()
-  q, err := channel.QueueDeclare(
-    "amount",
-    false,
-    false,
-    false,
-    false,
-    nil,
-  )
-  if err != nil{
-    log.Fatal(err)
-  }
+func main() {
+        conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+        if err != nil {
+          log.Fatal(err)
+        }
+        defer conn.Close()
 
-  productAmount,err := getProductAmount()
-  if err != nil {
-    log.Fatal(err)
-  }
-  body,err := json.Marshal(productAmount)
-  if err != nil {
-    log.Fatal(err)
-  }
-  err = channel.Publish(
-    "",
-    q.Name,
-    false,
-    false,
-    amqp.Publishing{
-      ContentType:"text/plain",
-      Body:       []byte(body),
-    })
-    if err != nil {
-      log.Fatal(err)
-    }
-    log.Printf("[x] Sent %s",body)
-  
+        ch, err := conn.Channel()
+        if err != nil {
+          log.Fatal(err)
+        }
+        defer ch.Close()
+
+        q, err := ch.QueueDeclare(
+                "rpc_queue", // name
+                false,       // durable
+                false,       // delete when unused
+                false,       // exclusive
+                false,       // no-wait
+                nil,         // arguments
+        )
+        if err != nil {
+          log.Fatal(err)
+        }
+
+        err = ch.Qos(
+                1,     // prefetch count
+                0,     // prefetch size
+                false, // global
+        )
+        if err != nil {
+          log.Fatal(err)
+        }
+
+        msgs, err := ch.Consume(
+                q.Name, // queue
+                "",     // consumer
+                false,  // auto-ack
+                false,  // exclusive
+                false,  // no-local
+                false,  // no-wait
+                nil,    // args
+        )
+        if err != nil {
+          log.Fatal(err)
+        }
+
+        forever := make(chan bool)
+
+        go func() {
+                for d := range msgs {
+                        //n := d.Body
+                        if err != nil {
+                        log.Fatal(err)
+                        }
+
+                        strUint,err := strconv.ParseUint(string(d.Body),10,32)
+                        
+                        
+                        response,err := getProductAmount(uint(strUint))
+                        if err != nil {
+                        log.Fatal(err)
+                        }
+                        responseJson,err := json.Marshal(response)
+                        if err != nil {
+                        log.Fatal(err)
+                        }
+
+                        err = ch.Publish(
+                                "",        // exchange
+                                d.ReplyTo, // routing key
+                                false,     // mandatory
+                                false,     // immediate
+                                amqp.Publishing{
+                                        ContentType:   "text/plain",
+                                        CorrelationId: d.CorrelationId,
+                                        Body:          responseJson,
+                                })
+
+                        if err != nil {
+                          log.Fatal(err)
+                        }
+
+                        d.Ack(false)
+                }
+        }()
+
+        log.Printf(" [*] Awaiting RPC requests")
+        <-forever
 }
 
 
