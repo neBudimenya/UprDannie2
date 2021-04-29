@@ -112,6 +112,9 @@ func main() {
                         if err != nil {
                         log.Fatal(err)
                         }
+                 
+                  
+                  corrId := randomString(32)  //create a random corrId
 
                         err = ch.Publish(
                                 "",        // exchange
