@@ -44,6 +44,13 @@ func getProductAmount(orderId uint)(product []*Product,err error){
   }
   return product,nil
 }
+func randomString(l int) string {
+        bytes := make([]byte, l)
+        for i := 0; i < l; i++ {
+                bytes[i] = byte(randInt(65, 90))
+        }
+        return string(bytes)
+}
 
 func main() {
         conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
